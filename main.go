@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv" 
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,23 +15,27 @@ import (
 	"github.com/kalyan-vitwit/LeaveManagementSystem/db"
 )
 
-// define a simple struct for JSON response
+
+
 type Message struct {
 	Message string `json:"message"`
 }
 type LoginPayload struct {
-	Email string `json:"email"`
+	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 type LoginResponse struct {
 	Token string `json:"token"`
 }
 type CreateLeavePayload struct {
-	Reason string `json:"reason"`
+	Reason   string    `json:"reason"`
 	FromDate time.Time `json:"from_date"`
-	ToDate time.Time `json:to_date`
+	ToDate   time.Time `json:"to_date"` 
 }
+
+
 type contextKey string
+
 const userContextKey = contextKey("user")
 const roleContextKey = contextKey("role")
 
@@ -45,10 +50,9 @@ func main() {
 	if err := db.SeedIfEmpty(); err != nil {
 		fmt.Printf("Error Seeding DB: %v", err)
 	}
-	
+
 	r := chi.NewRouter()
 
-	// Define a GET endpoint /hello
 	r.Get("/hello", func(w http.ResponseWriter, r *http.Request) {
 		response := Message{Message: "Hello, World!"}
 
@@ -58,23 +62,24 @@ func main() {
 	r.Post("/login", loginHandler)
 
 	r.Group(func(r chi.Router) {
-		r.Use(authMiddleware) // require JWT
+		r.Use(authMiddleware) 
 		r.Post("/leaves", createLeaveHandler)
 		r.Get("/leaves", listMyLeavesHandler)
 	})
 
-	// r.Group(func(r chi.Router) {
-	// 	r.Use(authMiddleware)
-	// 	r.Use(adminOnly)
-	// 	r.Get("/admin/leaves/pending", listPendingHandler)
-	// 	r.Post("/admin/leaves/{id}/approve", approveHandler)
-	// 	r.Post("/admin/leaves/{id}/reject", rejectHandler)
-	// })
+
+	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware) 
+		r.Use(adminOnly)     
+
+		r.Get("/admin/leaves/pending", listPendingHandler)
+		r.Post("/admin/leaves/{id}/approve", approveHandler)
+		r.Post("/admin/leaves/{id}/reject", rejectHandler)
+	})
 
 	fmt.Println("Server on :8080")
 	http.ListenAndServe(":8080", r)
 }
-
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	var payload LoginPayload
@@ -101,27 +106,25 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// create'ing the claims
-    claims := jwt.MapClaims{}
+	claims := jwt.MapClaims{}
 
-    claims["user_id"] = user.ID
-    claims["user_role"] = user.Role
+	claims["user_id"] = user.ID
+	claims["user_role"] = user.Role
 
-	// Sign the token with an algorithm and the claims
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-   
-    tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET"))) 
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-    if err != nil {
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(http.StatusInternalServerError)
-        json.NewEncoder(w).Encode(Message{Message: "Token creation Error"})
-        return
-    }
+	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
 
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusOK)
-    json.NewEncoder(w).Encode(LoginResponse{Token: tokenString})
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(Message{Message: "Token creation Error"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(LoginResponse{Token: tokenString})
 }
 
 func createLeaveHandler(w http.ResponseWriter, r *http.Request) {
@@ -133,16 +136,17 @@ func createLeaveHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(Message{Message: "Invalid request payload"})
+		return 
 	}
 
 	userID := r.Context().Value(userContextKey).(uint)
 
 	newLeave := db.Leave{
-		UserID: userID,
-		Reason: payload.Reason,
+		UserID:   userID,
+		Reason:   payload.Reason,
 		FromDate: payload.FromDate,
-		ToDate: payload.ToDate,
-		Status: "PENDING",
+		ToDate:   payload.ToDate,
+		Status:   "PENDING",
 	}
 
 	result := db.DB.Create(&newLeave)
@@ -154,54 +158,6 @@ func createLeaveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(newLeave)
-}
-
-func authMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        authHeader := r.Header.Get("Authorization")
-
-        if authHeader == "" {
-            http.Error(w, "Authorization header required", http.StatusUnauthorized)
-            return
-        }
-
-        tokenString := ""
-        if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-            tokenString = authHeader[7:]
-        } else {
-            http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
-            return
-        }
-
-        claims := jwt.MapClaims{}
-        token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-            return []byte(os.Getenv("JWT_SECRET")), nil
-        })
-
-        if err != nil || !token.Valid {
-            http.Error(w, "Invalid token", http.StatusUnauthorized)
-            return
-        }
-
-        userIDFloat, ok := claims["user_id"].(float64)
-        if !ok {
-            http.Error(w, "Invalid token: user_id missing or invalid", http.StatusUnauthorized)
-            return
-        }
-        userID := int(userIDFloat) 
-
-        userRole, ok := claims["user_role"].(string)
-        if !ok {
-            http.Error(w, "Invalid token: user_role missing or invalid", http.StatusUnauthorized)
-            return
-        }
-
-        ctx := r.Context()
-        ctx = context.WithValue(ctx, userContextKey, userID)
-        ctx = context.WithValue(ctx, roleContextKey, userRole)
-
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
 }
 
 func listMyLeavesHandler(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +173,137 @@ func listMyLeavesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK) 
 	json.NewEncoder(w).Encode(myLeaves)
+}
+
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		tokenString := ""
+		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			tokenString = authHeader[7:]
+		} else {
+			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		data := jwt.MapClaims{}
+		token, err := jwt.ParseWithClaims(tokenString, data, func(token *jwt.Token) (interface{}, error) {
+			return []byte(os.Getenv("JWT_SECRET")), nil
+		})
+
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		userIDFloat := data["user_id"].(float64)
+		
+		userID := uint(userIDFloat) 
+
+		userRole := data["user_role"].(string)
+		
+		ctx := r.Context()
+		ctx = context.WithValue(ctx, userContextKey, userID)
+		ctx = context.WithValue(ctx, roleContextKey, userRole)
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func adminOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role := r.Context().Value(roleContextKey).(string)
+
+
+		if role != "admin" {
+			http.Error(w, "Admin access only", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+
+func listPendingHandler(w http.ResponseWriter, r *http.Request) {
+	var leaves []db.Leave
+	w.Header().Set("Content-Type", "application/json")
+
+	result := db.DB.Where("status = ?", "PENDING").Find(&leaves)
+	if result.Error != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(Message{Message: "Could not retrieve pending leaves"})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(leaves)
+}
+
+func approveHandler(w http.ResponseWriter, r *http.Request) {
+	adminID := r.Context().Value(userContextKey).(uint)
+
+	leaveIDStr := chi.URLParam(r, "id")
+	leaveID, err := strconv.ParseUint(leaveIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid leave ID", http.StatusBadRequest)
+		return
+	}
+
+	var leave db.Leave
+	if err := db.DB.First(&leave, uint(leaveID)).Error; err != nil {
+		http.Error(w, "Leave not found", http.StatusNotFound)
+		return
+	}
+
+	updates := map[string]interface{}{
+		"status":      "APPROVED",
+		"handeled_by": fmt.Sprintf("%d", adminID),
+	}
+	if err := db.DB.Model(&leave).Updates(updates).Error; err != nil {
+		http.Error(w, "Failed to update leave status", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(leave) 
+}
+
+func rejectHandler(w http.ResponseWriter, r *http.Request) {
+	adminID := r.Context().Value(userContextKey).(uint)
+
+	leaveIDStr := chi.URLParam(r, "id")
+	leaveID, err := strconv.ParseUint(leaveIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid leave ID", http.StatusBadRequest)
+		return
+	}
+
+	var leave db.Leave
+	if err := db.DB.First(&leave, uint(leaveID)).Error; err != nil {
+		http.Error(w, "Leave not found", http.StatusNotFound)
+		return
+	}
+
+	updates := map[string]interface{}{
+		"status":      "REJECTED",
+		"handeled_by": fmt.Sprintf("%d", adminID),
+	}
+	if err := db.DB.Model(&leave).Updates(updates).Error; err != nil {
+		http.Error(w, "Failed to update leave status", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(leave) 
 }
